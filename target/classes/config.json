@@ -1,0 +1,43 @@
+{
+  "stacje": [
+    { "name": "baza",   "type": "bazowa" },
+    { "name": "polowa", "type": "posrednia" },
+    { "name": "szczyt", "type": "szczyt" }
+  ],
+  "trasy": [
+    { "name": "szczyt-baza",   "duration": 5 },
+    { "name": "polowa-baza",   "duration": 6 },
+    { "name": "szczyt-polowa", "duration": 4 }
+  ],
+  "wyciagi": [
+    {
+      "name": "A",
+      "route": "baza-szczyt",
+      "capacity": 8,
+      "interval": 10,
+      "boardingGroupSize": 2,
+      "maintenanceTime": 60,
+      "maintenanceDuration": 15
+    },
+    {
+      "name": "B",
+      "route": "baza-polowa",
+      "capacity": 5,
+      "interval": 6,
+      "boardingGroupSize": 1,
+      "maintenanceTime": 45,
+      "maintenanceDuration": 10
+    },
+    {
+      "name": "C",
+      "route": "polowa-szczyt",
+      "capacity": 10,
+      "interval": 5,
+      "boardingGroupSize": 1,
+      "maintenanceTime": 60,
+      "maintenanceDuration": 20
+    }
+  ],
+  "liczbaNarciarzy": 30,
+  "globalBoardingInterval": 2
+}
