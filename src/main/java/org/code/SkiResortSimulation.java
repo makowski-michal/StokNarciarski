@@ -278,7 +278,7 @@ class Narciarz extends Thread {
         semaforDojechal.acquire(); // Blokada - czeka, aż wyciąg powiadomi o dotarciu
     }
 
-    // Wybór losowej stacji docelowej (zawsze wybiera stację na innym poziomie niż obecnie się znajduje)
+    // Wybór losowej stacji docelowej (zawsze wybiera stację na innym poziomie niż obecnie się znajduje) Stację wybiera za każdym razem, gdy zatrzyma się (baza / pośrednia / szczyt)
     private Stacja wybierzLosowaStacjeDocelowa() {
         List<Stacja> cele = new ArrayList<>(); // Lista możliwych stacji docelowych
         int p = aktualnaStacja.getPoziom();
