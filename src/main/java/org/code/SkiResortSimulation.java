@@ -1,210 +1,189 @@
 package org.code;
 
-import com.google.gson.Gson;
-import java.io.FileReader;
-import java.util.*;
-import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
+import com.google.gson.Gson; // Biblioteka do parowania JSON
+import java.io.FileReader; // Do oczytywania plików
+import java.util.*; // Stryktury danych
+import java.util.concurrent.*; // Programowanie wielowątkowe
+import java.util.concurrent.atomic.AtomicBoolean; // Wielowątkowe zmienne logiczne
+import java.util.concurrent.atomic.AtomicInteger; // Wielowątkowe liczniki
 
-
-// --------------------- ENUMY ---------------------
 enum Status {
-    WAITING,    // narciarz czeka na wyciąg
-    ON_LIFT,    // na wyciągu
-    AT_STATION, // na stacji
-    SKIING      // zjazd
+    WAITING, // narciarz czeka na wyciąg
+    ON_LIFT, // narciarz znajduje się na wyciągu
+    AT_STATION, // narciarz jest na stacji
+    SKIING // narcirz zjeżdża trasą
 }
 
 enum WyciagStatus {
-    RUNNING,
-    MAINTENANCE
+    RUNNING, // wyciąg działa normalnie
+    MAINTENANCE // wyciąg jest w trakcie serwisu
 }
 
-// ---------------- GŁÓWNA KLASA SYMULACJI ----------------
 public class SkiResortSimulation {
+    // zbiory obiektów, które przechowują wszystkie elementy symulacji
+    static List<Stacja> stacje = new ArrayList<>(); // Lista wszystkich stacji
+    static List<Trasa> trasy = new ArrayList<>(); // Lista wszystkich tras zjazdowych
+    static List<Wyciag> wyciagi = new ArrayList<>(); // Lista wszystkich wyciągów
+    static List<Narciarz> narciarze = new ArrayList<>(); // Lista wszystkich narciarzy
 
-    // ZBIORY OBIEKTÓW
-    static List<Stacja> stacje = new ArrayList<>();
-    static List<Trasa> trasy = new ArrayList<>();
-    static List<Wyciag> wyciagi = new ArrayList<>();
-    static List<Narciarz> narciarze = new ArrayList<>();
-
-    // Callback aktualizujący GUI - dodane dla synchronizacji
+    // Callback aktualizujący GUI
     private static Runnable guiUpdateCallback = null;
 
-    // ------ KLASY KONFIGURACJI (odpowiadają config.json) ------
     static class StationCfg {
-        String name; // "baza", "polowa" itd.
-        String type; // "bazowa", "posrednia", "szczyt"
+        String name; // baza, polowa, szczyt
+        String type; // bazowa, posrednia, szczyt
     }
 
     static class RouteCfg {
-        String name;     // np. "szczyt-baza"
-        int duration;    // czas zjazdu
+        String name; // np. szczyt-baza
+        int duration; // czas zjazdu - te wszystkie zmienne muszą być w config!
     }
 
     static class LiftCfg {
-        String name;                // np. "A"
-        String route;               // np. "baza-szczyt"
-        int capacity;               // max osób jednocześnie na wyciągu
-        int interval;               // czas jazdy (wjazdu) w sekundach
-        int boardingGroupSize;      // ile osób wchodzi naraz (np. 4-os kanapa)
-        int maintenanceTime;        // kiedy serwis
-        int maintenanceDuration;    // jak długo serwis
+        String name; // nazwa wyciągu
+        String route; // ...
+        int capacity;
+        int interval; // czas wjazdu
+        int boardingGroupSize;
+        int maintenanceTime;
+        int maintenanceDuration;
     }
 
-    // Konfiguracja – + nowy parametr globalBoardingInterval
     static class Config {
-        List<StationCfg> stacje;
+        List<StationCfg> stacje; // konfiguracja stacji
         List<RouteCfg> trasy;
         List<LiftCfg> wyciagi;
         int liczbaNarciarzy;
-        int globalBoardingInterval; // co ile sekund pojawia się "jedna jednostka" do wsiadania
+        int globalBoardingInterval; // co ile sekund pojawia się jedna jednostka do wsiadania (krzesełko / gondola / orczyk)
     }
 
-    // Ustawienie callbacku do aktualizacji GUI
     public static void setGuiUpdateCallback(Runnable callback) {
         guiUpdateCallback = callback;
     }
 
-    // --------------- METODA main ---------------
     public static void main(String[] args) throws Exception {
 
-        // 1. Wczytanie configu
+        // Wczytanie configu JSON
         Gson gson = new Gson();
         FileReader reader = new FileReader("src/main/resources/config.json");
         Config cfg = gson.fromJson(reader, Config.class);
         reader.close();
 
-        // Uzupełnienie domyślnych wartości serwisu
-        for (LiftCfg lc : cfg.wyciagi) {
-            if (lc.maintenanceTime <= 0) {
-                lc.maintenanceTime = 60;
-            }
-            if (lc.maintenanceDuration <= 0) {
-                lc.maintenanceDuration = 20;
-            }
-            if (lc.boardingGroupSize <= 0) {
-                lc.boardingGroupSize = 1; // minimalnie 1 osoba naraz
-            }
-        }
-
-        // 2. Tworzenie stacji
-        Map<String, Stacja> stationMap = new HashMap<>();
+        // Tworzenie stacji na podstawie konfiguracji
+        Map<String, Stacja> stationMap = new HashMap<>(); // Mapa do szybkiego wyszukiwania stacji po nazwie
         for (StationCfg sc : cfg.stacje) {
             Stacja st = new Stacja(sc.name, sc.type);
             stacje.add(st);
             stationMap.put(sc.name, st);
         }
 
-        // 3. Tworzenie tras (zjazd)
-        Map<String, Trasa> routeMap = new HashMap<>();
-        for (RouteCfg rc : cfg.trasy) {
-            String[] parts = rc.name.split("-");
-            Stacja a = stationMap.get(parts[0]);
-            Stacja b = stationMap.get(parts[1]);
-            Trasa tr = new Trasa(rc.name, a, b, rc.duration);
+        // Tworzenie tras na podstawie konfiguracji
+        Map<String, Trasa> routeMap = new HashMap<>(); // Mapa do szybkiego wyszukiwania tras po nazwie
+        for(RouteCfg rc : cfg.trasy) {
+            String[] parts = rc.name.split("-"); // Rozdzielenie nazwy trasy na stację początkową i końcową
+            Stacja a = stationMap.get(parts[0]); // Pobranie stacji początkowej
+            Stacja b = stationMap.get(parts[1]); // Pobranie stacji końcowej
+            Trasa tr = new Trasa(rc.name, a, b, rc.duration); // Utworzenie nowej trasy
             trasy.add(tr);
             routeMap.put(rc.name, tr);
         }
 
-        // 4. Tworzenie wyciągów
-        for (LiftCfg lc : cfg.wyciagi) {
-            Trasa tr = routeMap.get(lc.route);
-            if (tr == null) {
-                // jeśli brak trasy, tworzymy "zerową"
+        // Tworzenie wyciągów
+        for(LiftCfg lc : cfg.wyciagi) {
+            Trasa tr = routeMap.get(lc.route); // Pobieranie trasy dla wyciągu
+            if(tr == null) {
+                // Jeśli brak trasy w konfiguracji, tworzymy "zerową" trasę dla wyciągu
                 String[] parts = lc.route.split("-");
-                Stacja a = stationMap.get(parts[0]);
-                Stacja b = stationMap.get(parts[1]);
-                tr = new Trasa(lc.route, a, b, 0);
+                Stacja a = stationMap.get(parts[0]); // Stacja dolna
+                Stacja b = stationMap.get(parts[1]); // Stacja górna
+                tr = new Trasa(lc.route, a, b, 0); // Czas zjazdu = 0 (tylko dla wyciągu, nie do zjazdu)
                 trasy.add(tr);
                 routeMap.put(lc.route, tr);
             }
+            // Utworzenie wyciągu z podanymi parametrami
             Wyciag w = new Wyciag(
-                    lc.name, tr,
-                    lc.capacity, lc.interval, lc.boardingGroupSize,
+                    lc.name, tr, lc.capacity, lc.interval, lc.boardingGroupSize,
                     lc.maintenanceTime, lc.maintenanceDuration,
-                    cfg.globalBoardingInterval // przekazujemy globalny
+                    cfg.globalBoardingInterval // Przekazujemy globalny interwał wsiadania
             );
             wyciagi.add(w);
         }
 
-        // 5. Tworzenie narciarzy
-        Stacja baza = stationMap.get("baza");
-        for (int i = 1; i <= cfg.liczbaNarciarzy; i++) {
-            Narciarz nar = new Narciarz(i, baza, wyciagi);
+        // Tworzenie obiektów narciarzy
+        Stacja baza = stationMap.get("baza"); // Wszyscy narciarze zaczynają w stacji bazowej
+        for(int i = 1; i<= cfg.liczbaNarciarzy; i++) {
+            Narciarz nar = new Narciarz(i, baza, wyciagi); // ID narciarza, stacja początkowa, lista wyciągów
             narciarze.add(nar);
         }
 
-        // 6. Rejestracja na stacji startowej
-        for (Narciarz nar : narciarze) {
-            if (nar.aktualnaStacja != null) {
-                nar.aktualnaStacja.narciarzPrzybyl(nar);
-                nar.status = Status.WAITING;
+        // Rejestracja narciarzy na stacji startowej
+        for(Narciarz nar : narciarze) {
+            if(nar.aktualnaStacja != null) {
+                nar.aktualnaStacja.narciarzPrzybyl(nar); // Zwiększenie licznika narciarzy na stacji
+                nar.status = Status.WAITING; // Ustawienie statusu na "oczekujący"
             }
         }
 
-        // 7. Start wątków (najpierw wyciągi, potem narciarze)
+        // Start wątków (najpierw wyciągi, potem narciarze)
         for (Wyciag w : wyciagi) {
-            w.start();
+            w.start(); // Uruchomienie wątku wyciągu
         }
         for (Narciarz nar : narciarze) {
             nar.start();
         }
 
-        // 8. Prosta pętla UI – co 2 sekundy
+        // Pętla dla TUI - co ok. 2 sekundy wypisuje statystyki symulacji
         while (true) {
             System.out.println("========================================");
-            for (Stacja st : stacje) {
+
+            // Wypisanie informacji o stacjach
+            for(Stacja st :stacje) {
                 System.out.println("Stacja " + st.nazwa + ": " + st.getLiczbaNarciarzy() + " narciarzy");
             }
-            for (Wyciag w : wyciagi) {
+
+            // Wypisanie informacji o wyciągach
+            for(Wyciag w : wyciagi) {
                 String statusText = w.getStatus() == WyciagStatus.MAINTENANCE ? " [SERWIS]" : "";
-                System.out.println("Wyciąg " + w.name + " (" + w.trasa.name + "): " +
-                        w.getNaWyciagu() + " na wyciągu" + statusText);
+                System.out.println("Wyciąg " + w.name + " (" + w.trasa.name + "): " + w.getNaWyciagu() +
+                        " na wyciągu" + statusText);
             }
-            for (Trasa tr : trasy) {
-                if (tr.duration > 0) {
+
+            // Wypisanie informacji o trasach zjazdowych
+            for(Trasa tr : trasy) {
+                if(tr.duration > 0) { // Tylko trasy faktycznie używane do zjazdu (nie zerowe)
                     System.out.println("Trasa " + tr.name + ": " + tr.getNaTrasie() + " w trakcie zjazdu");
                 }
             }
 
-            // Wywołaj callback aktualizacji GUI, jeśli został ustawiony
-            if (guiUpdateCallback != null) {
+            // Wywołanie callbacku aktualizacji GUI
+            if(guiUpdateCallback != null) {
                 guiUpdateCallback.run();
             }
 
-            Thread.sleep(2000);
+            Thread.sleep(2000); // Odświeżanie co 2 sekundy
         }
     }
 }
-
-// ----------------- MODELE -----------------
 
 class Stacja {
     String nazwa;
     String typ;
     private AtomicInteger liczbaNarciarzy = new AtomicInteger(0);
-    private int poziom; // 0=baza,1=pośrednia,2=szczyt
+    private int poziom; // 0 - baza, 1 - pośrednia, 2 - szczyt
 
+    // Kontrstruktor stacji
     public Stacja(String nazwa, String typ) {
         this.nazwa = nazwa;
         this.typ = typ;
         this.poziom = okreslPoziom();
     }
 
+    // Metoda określająca poziom stacji na podstawie nazwy i typu
     private int okreslPoziom() {
-        if (typ != null) {
-            String t = typ.toLowerCase();
-            if (t.contains("baz")) return 0;
-            if (t.contains("posred") || t.contains("pol")) return 1;
-            if (t.contains("szczyt")) return 2;
-        }
-        String n = nazwa.toLowerCase();
-        if (n.contains("baza"))   return 0;
-        if (n.contains("polowa") || n.contains("pośred")) return 1;
-        if (n.contains("szczyt") || n.contains("góra") || n.contains("top")) return 2;
+        String t = typ.toLowerCase();
+        if(t.contains("baz")) return 0;
+        if(t.contains("posred") || t.contains("pol")) return 1;
+        if(t.contains("szczyt")) return 2;
         return 0;
     }
 
@@ -213,11 +192,11 @@ class Stacja {
     }
 
     public void narciarzPrzybyl(Narciarz nar) {
-        liczbaNarciarzy.incrementAndGet();
+        liczbaNarciarzy.incrementAndGet(); // Zwiększenie licznika narciarzy na stacji
     }
 
     public void narciarzOdszedl(Narciarz nar) {
-        liczbaNarciarzy.decrementAndGet();
+        liczbaNarciarzy.decrementAndGet(); // Zmniejszenie licznika narciarzy na stacji
     }
 
     public int getLiczbaNarciarzy() {
@@ -227,24 +206,28 @@ class Stacja {
 
 class Trasa {
     String name;
-    Stacja stacja1;
-    Stacja stacja2;
+    Stacja stacja1; // Pierwsza stacja na trasie
+    Stacja stacja2; // Druga stacja na trasie
     Stacja stacjaDolna;
     Stacja stacjaGorna;
-    int duration; // sekundy – tak jak w config.json
+    int duration;
 
     private AtomicInteger naTrasie = new AtomicInteger(0);
 
+    // Konstruktor trasy
     public Trasa(String name, Stacja s1, Stacja s2, int duration) {
         this.name = name;
         this.stacja1 = s1;
         this.stacja2 = s2;
         this.duration = duration;
+
+        // Określenie, która stacja jest dolna, a która górna na podstawie poziomu
         if (s1 != null && s2 != null) {
-            if (s1.getPoziom() <= s2.getPoziom()) {
+            if(s1.getPoziom() <= s2.getPoziom()){
                 stacjaDolna = s1;
                 stacjaGorna = s2;
-            } else {
+            }
+            else {
                 stacjaDolna = s2;
                 stacjaGorna = s1;
             }
@@ -252,7 +235,7 @@ class Trasa {
     }
 
     public void narciarzStart() {
-        naTrasie.incrementAndGet();
+        naTrasie.incrementAndGet(); // Zwiększenie licznika narciarzy na trasie
     }
 
     public void narciarzKoniec() {
@@ -264,76 +247,84 @@ class Trasa {
     }
 }
 
+// Dziedziczy po Thread - każdy narciarz to osobny wątek
 class Narciarz extends Thread {
     int id;
     Stacja aktualnaStacja;
     Status status;
     private List<Wyciag> wyciagi;
     private Random random = new Random();
-    Semaphore semaforDojechal = new Semaphore(0);
+    Semaphore semaforDojechal = new Semaphore(0); // Semafor do synchronizacji z wyciągiem
 
+    // Konstruktor narciarza
     public Narciarz(int id, Stacja start, List<Wyciag> wyciagi) {
         this.id = id;
         this.aktualnaStacja = start;
-        this.status = Status.WAITING;
+        this.status = Status.WAITING; // Początkowy status - oczekujący
         this.wyciagi = wyciagi;
     }
 
     public void powiadomDojechal() {
-        semaforDojechal.release();
+        semaforDojechal.release(); // Zwolnienie semafora - narciarz może kontynuować działanie
     }
 
-    // Narciarz oczekuje, aż wyciąg nie będzie w serwisie
-    // i dołączy do kolejki w wyciągu
+    // Narciarz oczekuje, aż wyciąg nie będzie w serwisie i dołącza do kolejki w wyciągu
     public void wsiadzNaWyciag(Wyciag wyciag) throws InterruptedException {
-        while (wyciag.getStatus() == WyciagStatus.MAINTENANCE || wyciag.isMaintenancePending()) {
-            Thread.sleep(10);
+        // Czekanie, aż wyciąg będzie dostępny (nie w serwisie)
+        while(wyciag.getStatus() == WyciagStatus.MAINTENANCE || wyciag.isMaintenancePending()) {
+            Thread.sleep(10); // Mała pauza przed kolejnym sprawdzeniem
         }
-        wyciag.kolejkaOczekujacych.put(this);
-        semaforDojechal.acquire(); // czeka, aż wyciąg powie "dotarłeś"
+        wyciag.kolejkaOczekujacych.put(this); // Dodanie narciarza do kolejki oczekujących
+        semaforDojechal.acquire(); // Blokada - czeka, aż wyciąg powiadomi o dotarciu
     }
 
-    // Wybór losowej stacji docelowej
+    // Wybór losowej stacji docelowej (zawsze wybiera stację na innym poziomie niż obecnie się znajduje)
     private Stacja wybierzLosowaStacjeDocelowa() {
-        List<Stacja> cele = new ArrayList<>();
+        List<Stacja> cele = new ArrayList<>(); // Lista możliwych stacji docelowych
         int p = aktualnaStacja.getPoziom();
-        if (p == 0) { // baza -> (1,2)
-            for (Stacja st : SkiResortSimulation.stacje) {
-                if (st.getPoziom() > 0) cele.add(st);
+        if(p == 0) {
+            // jest w bazie, wybiera pośrednią lub szczyt (1 lub 2)
+            for(Stacja st : SkiResortSimulation.stacje) {
+                if(st.getPoziom() > 0) cele.add(st);
             }
-        } else if (p == 1) { // pośrednia -> (0,2)
-            for (Stacja st : SkiResortSimulation.stacje) {
-                if (st.getPoziom() != 1) cele.add(st);
+        } else if (p == 1) {
+            for(Stacja st : SkiResortSimulation.stacje) {
+                if(st.getPoziom() != 1) cele.add(st);
             }
-        } else { // p==2, szczyt -> (0,1)
-            for (Stacja st : SkiResortSimulation.stacje) {
-                if (st.getPoziom() < 2) cele.add(st);
+        } else {
+            for(Stacja st : SkiResortSimulation.stacje) {
+                if(st.getPoziom() < 2) cele.add(st);
             }
         }
-        if (cele.isEmpty()) return null;
-        return cele.get(random.nextInt(cele.size()));
+        if(cele.isEmpty()) return null;
+        return cele.get(random.nextInt(cele.size())); // Wybór losowej stacji z listy
     }
 
-    // BFS, by znaleźć ciąg wyciągów do stacji docelowej
+    // Narciarz najpierw tworzy "mapę" i szuka listy wyciągów jakimi ma dostać się do wybranej stacji, a potem odtwarza ją podczas przmieszczenia się na stoku
     private List<Wyciag> znajdzSciezkeWyciagow(Stacja from, Stacja to) {
         Map<Stacja, Wyciag> poprzedni = new HashMap<>();
-        Queue<Stacja> kolejka = new ArrayDeque<>();
-        Set<Stacja> odwiedzone = new HashSet<>();
-        kolejka.add(from);
-        odwiedzone.add(from);
+        Queue<Stacja> kolejka = new ArrayDeque<>(); // Kolejka stacji do przetworzenia
+        Set<Stacja> odwiedzone = new HashSet<>(); // Zbiór odwiedzonych stacji
+        kolejka.add(from); // Dodanie stacji początkowej
+        odwiedzone.add(from); // Oznaczenie jako odwiedzoną
 
         Stacja dest = null;
         while (!kolejka.isEmpty()) {
-            Stacja cur = kolejka.poll();
+            Stacja cur = kolejka.poll(); // Pobieranie następnej stacji z kolejki
             if (cur == to) {
-                dest = cur;
+                dest = cur; // cur - current
                 break;
             }
+
+            // Przeglądanie wszystkich wyciągów
             for (Wyciag w : wyciagi) {
-                if (w.getStatus() == WyciagStatus.MAINTENANCE || w.isMaintenancePending()) continue;
-                if (w.trasa.stacjaDolna == cur) {
-                    Stacja next = w.trasa.stacjaGorna;
-                    if (!odwiedzone.contains(next)) {
+                // Pomijamy wyciągi w serwisie
+                if(w.getStatus() == WyciagStatus.MAINTENANCE || w.isMaintenancePending()) continue;
+
+                // Sprawdzamy czy wyciąg zaczyna się w aktualnej stacji
+                if(w.trasa.stacjaDolna == cur) {
+                    Stacja next = w.trasa.stacjaGorna; // Następna stacja to górna stacja wyciągu
+                    if(!odwiedzone.contains(next)) { // Jeśli jeszcze nie odwiedzona
                         odwiedzone.add(next);
                         poprzedni.put(next, w);
                         kolejka.add(next);
@@ -342,106 +333,115 @@ class Narciarz extends Thread {
             }
         }
 
+        // Odtworzenie ścieżki od stacji docelowej do początkowej
         List<Wyciag> sciezka = new ArrayList<>();
-        if (dest != null) {
+        if(dest != null) {
             Stacja cur = dest;
-            while (cur != from) {
+            while(cur != from) {
                 Wyciag w = poprzedni.get(cur);
-                if (w == null) break;
-                sciezka.add(0, w);
+                if(w == null) break;
+                sciezka.add(0, w); // Dodawanie na początek listy (odwrócona kolejność)
                 cur = w.trasa.stacjaDolna;
             }
         }
-        return sciezka;
+        return sciezka; // Zwrócenie znalezionej ścieżki wyciągów
     }
 
-    // Szukanie / tworzenie trasy zjazdowej
+    // Metoda znajdująca lub tworząca trasę zjazdową między stacjami
     private Trasa znajdzTraseZjazdu(Stacja from, Stacja to) {
         String nazwa = from.nazwa + "-" + to.nazwa;
+        // Najpierw szukamy istniejącej trasy
         for (Trasa t : SkiResortSimulation.trasy) {
-            if (t.name.equals(nazwa) && t.duration > 0) return t;
+            if(t.name.equals(nazwa) && t.duration > 0) return t;
         }
+
+        // Jeśli nie ma, tworzymy nową z losowym czasem zjazdu (5-10 sekund)
         int d = 5 + random.nextInt(5);
         Trasa nowa = new Trasa(nazwa, from, to, d);
         SkiResortSimulation.trasy.add(nowa);
         return nowa;
     }
 
-    @Override
-    public void run() {
+    public void run (){
         try {
-            while (true) {
-                // Wybór celu
+            while(true) {
+                // Wybór celu podróży
                 Stacja cel = wybierzLosowaStacjeDocelowa();
-                if (cel == null) {
-                    Thread.sleep(50);
+                if(cel == null) {
+                    Thread.sleep(50); // Krótka pauza jeśli nie można wybrać celu (np. wszystkie wyciągi w serwisie)
                     continue;
                 }
-                // wjazd w górę
-                if (cel.getPoziom() > aktualnaStacja.getPoziom()) {
+
+                // Wjazd w górę, jeśli cel jest wyżej niż aktualna stacja
+                if(cel.getPoziom() > aktualnaStacja.getPoziom()) {
+                    // Znajduje ścieżkę wyciągów do celu
                     List<Wyciag> sciezka = znajdzSciezkeWyciagow(aktualnaStacja, cel);
-                    if (sciezka.isEmpty()) {
-                        Thread.sleep(100);
+                    if(sciezka.isEmpty()) {
+                        Thread.sleep(100); // Pauza, jeśli nie znaleziono ścieżki
                         continue;
                     }
-                    for (Wyciag w : sciezka) {
-                        status = Status.WAITING;
+
+                    // Korzystanie z każdego wyciągu po kolei
+                    for(Wyciag w : sciezka) {
+                        status = Status.WAITING; // Oczekiwanie na wyciąg
                         wsiadzNaWyciag(w);
-                        aktualnaStacja = w.trasa.stacjaGorna;
-                        status = Status.AT_STATION;
+                        aktualnaStacja = w.trasa.stacjaGorna; // Aktualizacja pozycji
+                        status = Status.AT_STATION; // Aktualizacja pozycji - na jakiej stacji znajduje się narciarz?
                     }
                 }
-                // zjazd w dół
-                else if (cel.getPoziom() < aktualnaStacja.getPoziom()) {
-                    status = Status.AT_STATION;
+
+                // Zjazd w dół, jeśli cel jest niżej niż aktualna stacja
+                else if(cel.getPoziom() < aktualnaStacja.getPoziom()) {
+                    status = Status.AT_STATION; // Chwilowa przerwa na stacji, żeby wyświetlił się podczas aktualizacji GUI, a nie od razu zjechał
                     Thread.sleep(20);
-                    aktualnaStacja.narciarzOdszedl(this);
-                    Trasa zjazd = znajdzTraseZjazdu(aktualnaStacja, cel);
+                    aktualnaStacja.narciarzOdszedl(this); // Opuszczenie stacji
+                    Trasa zjazd = znajdzTraseZjazdu(aktualnaStacja, cel); // Znajdowanie trasy zjazdu
                     status = Status.SKIING;
-                    zjazd.narciarzStart();
+                    zjazd.narciarzStart(); // Rejestracja rozpoczęcia zjazdu
                     Thread.sleep(zjazd.duration * 1000L);
                     zjazd.narciarzKoniec();
-                    aktualnaStacja = cel;
-                    aktualnaStacja.narciarzPrzybyl(this);
-                    status = Status.WAITING;
+                    aktualnaStacja = cel; // Aktualizacja pozycji
+                    aktualnaStacja.narciarzPrzybyl(this); // Rejestracja przybycia na nową stację
+                    status = Status.WAITING; // Czeka na kolejną aktywność
                 }
                 else {
-                    Thread.sleep(50);
+                    Thread.sleep(50); // Jeśli cel na tym samym poziomie - chwila przerwy
                     continue;
                 }
-                // odpoczynek
+
+                // Odpoczynek narciarza między przejazdami (1-3) sekundy, żeby było go widać w GUI
                 Thread.sleep(1000 + random.nextInt(2000));
             }
         } catch (InterruptedException e) {
-            // koniec wątku
+
         }
     }
 }
 
-// Wyciąg – z nowym boardingGroupSize + globalBoardingInterval
 class Wyciag extends Thread {
-    String name;                // jak w config
+    String name;
     Trasa trasa;
-    int capacity;               // max osób jednocześnie na wyciągu
-    int interval;               // czas jazdy (sek)
-    int boardingGroupSize;      // ile osób wchodzi naraz
-    int maintenanceTime;        // kiedy start serwisu
-    int maintenanceDuration;    // ile trwa serwis
-    int globalBoardingInterval; // co ile sek. "podjeżdża" krzesełko do wsiadania
+    int capacity;
+    int interval;
+    int boardingGroupSize;
+    int maintenanceTime;
+    int maintenanceDuration;
+    int globalBoardingInterval; // Czas co ile podjeżdża wyciąg jest ten sam dla całego stoku, różnią się jednak pojedmnością - capacity
 
-    private long startTime;
-    private AtomicBoolean inMaintenance = new AtomicBoolean(false);
-    private volatile boolean maintenancePending = false;
+    private long startTime; // Czas rozpoczęcia działania wyciągu
+    private AtomicBoolean inMaintenance = new AtomicBoolean(false); // Flaga, która oznacza trwający serwis
+    private volatile boolean maintenancePending = false; // Flaga, która oznacza planowany serwis
 
-    // kolejka oczekujących
+    // Kolejka oczekujących narciarzy
     BlockingQueue<Narciarz> kolejkaOczekujacych = new LinkedBlockingQueue<>();
-    // narciarze aktualnie w drodze
+    // Mapa narciarzy aktualnie na wyciągu i czasu ich przybycia na górną stację
     private ConcurrentHashMap<Narciarz, Long> narciarzeDoCzasuPrzybycia = new ConcurrentHashMap<>();
-    private AtomicInteger naWyciagu = new AtomicInteger(0);
+    private AtomicInteger naWyciagu = new AtomicInteger(0); // Licznik narciarzy na wyciągu
 
+    // Konstruktor wyciągu
     public Wyciag(String name, Trasa trasa, int capacity, int interval, int boardingGroupSize,
                   int maintenanceTime, int maintenanceDuration, int globalBoardingInterval) {
-        this.name = name;
+        this.name = name; // Rozróżnienie między polami a zmiennymi lokalnymi (można by zrobić np. name = someName, ale mniej czytelne)
         this.trasa = trasa;
         this.capacity = capacity;
         this.interval = interval;
@@ -450,13 +450,15 @@ class Wyciag extends Thread {
         this.maintenanceDuration = maintenanceDuration;
         this.globalBoardingInterval = globalBoardingInterval;
 
-        this.startTime = System.currentTimeMillis();
+        this.startTime = System.currentTimeMillis(); // Inicjalizacja czasu startu
     }
 
+    // Sprawdzenie, czy wyciąg jest w stanie oczekiwania na serwis
     public boolean isMaintenancePending() {
         return maintenancePending;
     }
 
+    // Getter dla liczby narciarzy na wyciągu - getter zwraca wartość prywatnego pola klasy
     public int getNaWyciagu() {
         return naWyciagu.get();
     }
@@ -465,70 +467,78 @@ class Wyciag extends Thread {
         return inMaintenance.get() ? WyciagStatus.MAINTENANCE : WyciagStatus.RUNNING;
     }
 
+    // Metoda obsługująca wysiadających narciarzy (gdy dotrą do górnej stacji)
     private void obsluzWysiadajacych() {
         long now = System.currentTimeMillis();
-        for (Map.Entry<Narciarz, Long> e : narciarzeDoCzasuPrzybycia.entrySet()) {
-            if (now >= e.getValue()) {
+        for(Map.Entry<Narciarz, Long> e :narciarzeDoCzasuPrzybycia.entrySet()) {
+            // Sprawdzenie czy nadszedł czas przybycia
+            if(now >= e.getValue()) {
                 Narciarz nar = e.getKey();
-                trasa.stacjaGorna.narciarzPrzybyl(nar);
-                naWyciagu.decrementAndGet();
+                trasa.stacjaGorna.narciarzPrzybyl(nar); // Rejestracja przybycia na górną stację
+                naWyciagu.decrementAndGet(); // Zmniejszenie licznika narciarzy na wyciągu
                 nar.powiadomDojechal();
-                nar.status = Status.AT_STATION;
-                narciarzeDoCzasuPrzybycia.remove(nar);
+                nar.status = Status.AT_STATION; // Zmiana statusu narciarza
+                narciarzeDoCzasuPrzybycia.remove(nar); // Usunięcie z mapy osbługiwanych
             }
         }
     }
 
-    @Override
     public void run() {
         try {
-            long lastBoardTime = System.currentTimeMillis();
-            while (true) {
-                // Sprawdzaj czy serwis
-                long elapsed = (System.currentTimeMillis() - startTime) / 1000;
-                if (elapsed >= maintenanceTime) {
-                    maintenancePending = true;
-                    // czekaj aż pusty
-                    while (naWyciagu.get() > 0) {
+            long lastBoardTime = System.currentTimeMillis(); // Czas ostatniego wsiadania grupowego
+            while(true) {
+                // Sprawdzaj czy nadszedł czas na serwis
+                long elapsed = (System.currentTimeMillis() - startTime) / 1000; // Czas który upłynął od startu
+                if(elapsed >= maintenanceTime) {
+                    maintenancePending = true; // Oznaczenie, że serwis jest planowany w najbliższym czasie
+                    // Czekaj aż wyciąg będzie pusty, zanim rozpoczniesz serwis, ale nie wpuszczaj kolejnych narciarzy
+                    while(naWyciagu.get() > 0) {
                         obsluzWysiadajacych();
-                        Thread.sleep(10);
+                        Thread.sleep(10); // Mała pauza przed kolejnym sprawdzeniem
                     }
-                    // serwis
-                    inMaintenance.set(true);
+
+                    // Przeprowadzenie serwisu
+                    inMaintenance.set(true); // Ustawienie statusu na serwis
                     System.out.println("Wyciąg " + name + " serwis przez " + maintenanceDuration + " sek.");
-                    Thread.sleep(maintenanceDuration * 1000L);
-                    inMaintenance.set(false);
-                    maintenancePending = false;
-                    startTime = System.currentTimeMillis();
-                    lastBoardTime = System.currentTimeMillis();
+                    Thread.sleep(maintenanceDuration * 1000L); // Symulacja czasu trwania serwisu, mnożenie przez 1000 konwertuje sekundy na milisekundy
+                    // 1 sekudna = 1000 milisekund, a L na końcu liczby oznacza, że jest to wartość typu long zamiast domyślnego int
+                    inMaintenance.set(false); // Wyłączenie statusu serwisu
+                    maintenancePending = false; // Wyłączenie flagi oczekiwania na serwis
+                    startTime = System.currentTimeMillis(); // Reset czasu startu serwisu
+                    lastBoardTime = System.currentTimeMillis(); // Reset czasu ostatniego wsiadania przed serwisem (bo już jest po serwisie)
                     System.out.println("Wyciąg " + name + " koniec serwisu.");
                 }
                 else {
-                    // obsługa zsiadających
                     obsluzWysiadajacych();
-                    // co globalBoardingInterval sek. wpuszczamy max boardingGroupSize narciarzy
+
+                    // Co czas ustalony w globalBoardingInterval wpuszczamy max boardingGroupSize narciarzy
                     long now = System.currentTimeMillis();
+                    // Sprawdzenie czy minął czas od ostatniego wsiadania i czy nie jest planowany serwis niedługo
                     if (!maintenancePending && now - lastBoardTime >= globalBoardingInterval * 1000L) {
-                        int boarded = 0;
-                        while (boarded < boardingGroupSize && naWyciagu.get() < capacity) {
-                            Narciarz next = kolejkaOczekujacych.poll();
-                            if (next == null) break; // nikt nie czeka
-                            // wsiada
-                            trasa.stacjaDolna.narciarzOdszedl(next);
-                            naWyciagu.incrementAndGet();
-                            next.status = Status.ON_LIFT;
-                            // dotrze na górę za "interval" sekund
+                        int boarded = 0; // Licznik wsiadających w tej grupie
+                        // Pętla wsiadania - dopóki nie osiągniemy limitu grupy lub pojemności danego wyciągu
+                        while(boarded < boardingGroupSize && naWyciagu.get() < capacity) {
+                            Narciarz next = kolejkaOczekujacych.poll(); // Pobranie następnego narciarza z kolejki
+                            if(next == null) break; // Przerwanie jeśli kolejka jest już pusta
+
+                            // Obsługa wsiadania
+                            trasa.stacjaDolna.narciarzOdszedl(next); // Narciarz opuszcza stację dolną
+                            naWyciagu.incrementAndGet(); // Więcej narciarzy na wyciągu (licznik)
+                            next.status = Status.ON_LIFT; // Zmiana statusu narciarza
+
+                            // Obliczenie czasu przybycia narciarza do górnej stacji
                             long arrivalTime = now + interval * 1000L;
-                            narciarzeDoCzasuPrzybycia.put(next, arrivalTime);
+                            narciarzeDoCzasuPrzybycia.put(next, arrivalTime); // Dodanie do mapy narciarza jadącego w górę
                             boarded++;
                         }
-                        lastBoardTime = now;
+                        lastBoardTime = now; // Aktualizacja czasu ostatniego wsiadania
                     }
                     Thread.sleep(10);
                 }
             }
         } catch (InterruptedException e) {
-            // koniec wątku wyciągu
+
         }
     }
+
 }

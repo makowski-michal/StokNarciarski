@@ -38,6 +38,7 @@
       "maintenanceDuration": 20
     }
   ],
+  "_comment": "Uwaga: Z uwagi na wymiary GUI zaleca się testowanie symulacji dla ~30 narciarzy, to zapewnia wygodniejszy odczyt - może być ich więcej, lecz przy 40-50 narciarzach na jednym wyciągu jednocześnie, mogą oni zachodzić na siebie",
   "liczbaNarciarzy": 30,
   "globalBoardingInterval": 2
 }
