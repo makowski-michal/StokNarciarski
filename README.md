@@ -1,6 +1,7 @@
 🎿 Symulacja Stoku Narciarskiego
 
 📋 Opis Projektu
+
 Wielowątkowa symulacja ruchu narciarzy na stoku narciarskim zaimplementowana w Javie z wykorzystaniem programowania współbieżnego. Projekt symuluje realistyczne zachowania narciarzy, działanie wyciągów oraz ich okresowe konserwacje, wszystko w czasie rzeczywistym z graficzną wizualizacją.
 
 ✨ Funkcjonalności
