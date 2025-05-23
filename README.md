@@ -11,11 +11,9 @@ Wielowątkowa symulacja ruchu narciarzy na stoku narciarskim zaimplementowana w 
 3 wyciągi z różnymi parametrami:
 
 Pojemność (max liczba narciarzy jednocześnie)
-Częstotliwość kursowania
-Wielkość grup wsiadających
-Harmonogram konserwacji
-
-
+  Częstotliwość kursowania
+  Wielkość grup wsiadających
+  Harmonogram konserwacji
 Trasy zjazdowe dynamicznie tworzone między stacjami
 
 👥 Zachowanie Narciarzy
@@ -43,6 +41,7 @@ Legenda i intuicyjne kolory
 Java 11+
 Swing - interfejs graficzny
 Gson - obsługa konfiguracji JSON
+
 Programowanie wielowątkowe:
 
 Thread, AtomicInteger, AtomicBoolean
