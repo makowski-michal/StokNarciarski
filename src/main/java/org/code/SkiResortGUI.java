@@ -595,7 +595,6 @@ public class SkiResortGUI extends JFrame {
 
         public static void main(String[] args) {
             try {
-                // Ustaw wygląd natywny dla systemu operacyjnego
                 UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
             } catch (Exception e) {
                 e.printStackTrace();

@@ -29,6 +29,10 @@ public class SkiResortSimulation {
     // Callback aktualizujący GUI
     private static Runnable guiUpdateCallback = null;
 
+    // Lock dla głównej pętli symulacji
+    private static final Object simulationLock = new Object();
+    private static volatile boolean shouldUpdate = false;
+
     static class StationCfg {
         String name; // baza, polowa, szczyt
         String type; // bazowa, posrednia, szczyt
@@ -59,6 +63,13 @@ public class SkiResortSimulation {
 
     public static void setGuiUpdateCallback(Runnable callback) {
         guiUpdateCallback = callback;
+    }
+
+    public static void triggerGuiUpdate() {
+        synchronized(simulationLock) {
+            shouldUpdate = true;
+            simulationLock.notify();
+        }
     }
 
     public static void main(String[] args) throws Exception {
@@ -132,8 +143,24 @@ public class SkiResortSimulation {
             nar.start();
         }
 
+        // Wątek do okresowego wyzwalania aktualizacji
+        Timer updateTimer = new Timer(true);
+        updateTimer.scheduleAtFixedRate(new TimerTask() {
+            @Override
+            public void run() {
+                triggerGuiUpdate();
+            }
+        }, 2000, 2000);
+
         // Pętla dla TUI - co ok. 2 sekundy wypisuje statystyki symulacji
         while (true) {
+            synchronized(simulationLock) {
+                while (!shouldUpdate) {
+                    simulationLock.wait(); // Pasywne czekanie na powiadomienie
+                }
+                shouldUpdate = false;
+            }
+
             System.out.println("========================================");
 
             // Wypisanie informacji o stacjach
@@ -160,7 +187,6 @@ public class SkiResortSimulation {
                 guiUpdateCallback.run();
             }
 
-            Thread.sleep(2000); // Odświeżanie co 2 sekundy
         }
     }
 }
@@ -270,15 +296,17 @@ class Narciarz extends Thread {
 
     // Narciarz oczekuje, aż wyciąg nie będzie w serwisie i dołącza do kolejki w wyciągu
     public void wsiadzNaWyciag(Wyciag wyciag) throws InterruptedException {
-        // Czekanie, aż wyciąg będzie dostępny (nie w serwisie)
-        while(wyciag.getStatus() == WyciagStatus.MAINTENANCE || wyciag.isMaintenancePending()) {
-            Thread.sleep(10); // Mała pauza przed kolejnym sprawdzeniem
+        // Pasywne czekanie na dostępność wyciągu używając wait/notify
+        synchronized(wyciag.maintenanceLock) {
+            while(wyciag.getStatus() == WyciagStatus.MAINTENANCE || wyciag.isMaintenancePending()) {
+                wyciag.maintenanceLock.wait(); // Pasywne czekanie - wątek śpi
+            }
         }
         wyciag.kolejkaOczekujacych.put(this); // Dodanie narciarza do kolejki oczekujących
         semaforDojechal.acquire(); // Blokada - czeka, aż wyciąg powiadomi o dotarciu
     }
 
-    // Wybór losowej stacji docelowej (zawsze wybiera stację na innym poziomie niż obecnie się znajduje) Stację wybiera za każdym razem, gdy zatrzyma się (baza / pośrednia / szczyt)
+    // Wybór losowej stacji docelowej (zawsze wybiera stację na innym poziomie niż obecnie się znajduje)
     private Stacja wybierzLosowaStacjeDocelowa() {
         List<Stacja> cele = new ArrayList<>(); // Lista możliwych stacji docelowych
         int p = aktualnaStacja.getPoziom();
@@ -432,6 +460,12 @@ class Wyciag extends Thread {
     private AtomicBoolean inMaintenance = new AtomicBoolean(false); // Flaga, która oznacza trwający serwis
     private volatile boolean maintenancePending = false; // Flaga, która oznacza planowany serwis
 
+    // Lock dla synchronizacji serwisu
+    final Object maintenanceLock = new Object();
+    // Lock dla synchronizacji opróżniania wyciągu
+    private final Object emptyLiftLock = new Object();
+
+
     // Kolejka oczekujących narciarzy
     BlockingQueue<Narciarz> kolejkaOczekujacych = new LinkedBlockingQueue<>();
     // Mapa narciarzy aktualnie na wyciągu i czasu ich przybycia na górną stację
@@ -475,10 +509,17 @@ class Wyciag extends Thread {
             if(now >= e.getValue()) {
                 Narciarz nar = e.getKey();
                 trasa.stacjaGorna.narciarzPrzybyl(nar); // Rejestracja przybycia na górną stację
-                naWyciagu.decrementAndGet(); // Zmniejszenie licznika narciarzy na wyciągu
+                int currentCount = naWyciagu.decrementAndGet(); // Zmniejszenie licznika narciarzy na wyciągu
                 nar.powiadomDojechal();
                 nar.status = Status.AT_STATION; // Zmiana statusu narciarza
                 narciarzeDoCzasuPrzybycia.remove(nar); // Usunięcie z mapy osbługiwanych
+
+                // Powiadomienie o opróżnieniu wyciągu
+                if(currentCount == 0) {
+                    synchronized(emptyLiftLock) {
+                        emptyLiftLock.notify();
+                    }
+                }
             }
         }
     }
@@ -491,22 +532,31 @@ class Wyciag extends Thread {
                 long elapsed = (System.currentTimeMillis() - startTime) / 1000; // Czas który upłynął od startu
                 if(elapsed >= maintenanceTime) {
                     maintenancePending = true; // Oznaczenie, że serwis jest planowany w najbliższym czasie
-                    // Czekaj aż wyciąg będzie pusty, zanim rozpoczniesz serwis, ale nie wpuszczaj kolejnych narciarzy
-                    while(naWyciagu.get() > 0) {
-                        obsluzWysiadajacych();
-                        Thread.sleep(10); // Mała pauza przed kolejnym sprawdzeniem
+
+                    // Pasywne czekanie aż wyciąg będzie pusty
+                    synchronized(emptyLiftLock) {
+                        while(naWyciagu.get() > 0) {
+                            obsluzWysiadajacych();
+                            if(naWyciagu.get() > 0) {
+                                emptyLiftLock.wait(100); // Czeka max 100ms lub do powiadomienia
+                            }
+                        }
                     }
 
                     // Przeprowadzenie serwisu
-                    inMaintenance.set(true); // Ustawienie statusu na serwis
-                    System.out.println("Wyciąg " + name + " serwis przez " + maintenanceDuration + " sek.");
-                    Thread.sleep(maintenanceDuration * 1000L); // Symulacja czasu trwania serwisu, mnożenie przez 1000 konwertuje sekundy na milisekundy
-                    // 1 sekudna = 1000 milisekund, a L na końcu liczby oznacza, że jest to wartość typu long zamiast domyślnego int
-                    inMaintenance.set(false); // Wyłączenie statusu serwisu
-                    maintenancePending = false; // Wyłączenie flagi oczekiwania na serwis
-                    startTime = System.currentTimeMillis(); // Reset czasu startu serwisu
-                    lastBoardTime = System.currentTimeMillis(); // Reset czasu ostatniego wsiadania przed serwisem (bo już jest po serwisie)
-                    System.out.println("Wyciąg " + name + " koniec serwisu.");
+                    synchronized(maintenanceLock) {
+                        inMaintenance.set(true); // Ustawienie statusu na serwis
+                        System.out.println("Wyciąg " + name + " serwis przez " + maintenanceDuration + " sek.");
+                        Thread.sleep(maintenanceDuration * 1000L); // Symulacja czasu trwania serwisu
+                        inMaintenance.set(false); // Wyłączenie statusu serwisu
+                        maintenancePending = false; // Wyłączenie flagi oczekiwania na serwis
+                        startTime = System.currentTimeMillis(); // Reset czasu startu serwisu
+                        lastBoardTime = System.currentTimeMillis(); // Reset czasu ostatniego wsiadania przed serwisem
+                        System.out.println("Wyciąg " + name + " koniec serwisu.");
+
+                        // Powiadomienie wszystkich czekających narciarzy
+                        maintenanceLock.notifyAll();
+                    }
                 }
                 else {
                     obsluzWysiadajacych();
@@ -533,7 +583,9 @@ class Wyciag extends Thread {
                         }
                         lastBoardTime = now; // Aktualizacja czasu ostatniego wsiadania
                     }
-                    Thread.sleep(10);
+                    synchronized(this) {
+                        this.wait(10);
+                    }
                 }
             }
         } catch (InterruptedException e) {
